@@ -197,3 +197,67 @@ ggplot(threshold_stats, aes(x = Threshold, y = Win_Percent)) +
        x = "First to Score Threshold",
        y = "Win Percentage") +
   theme_minimal()
+
+#####################################################
+# Bookie pay out analysis
+quarter_scores <- home_periods %>%
+  select(match.matchId, periodNumber, home_cumulative) %>%
+  left_join(
+    away_periods %>% select(match.matchId, periodNumber, away_cumulative),
+    by = c("match.matchId", "periodNumber")
+  ) %>%
+  filter(periodNumber %in% 1:3) %>%
+  pivot_wider(
+    names_from = periodNumber,
+    values_from = c(home_cumulative, away_cumulative),
+    names_prefix = "Q"
+  )
+
+quarter_margins <- quarter_scores %>%
+  left_join(
+    score_worm %>%
+      select(match.matchId, home_total = `homeTeamScore.matchScore.totalScore`,
+             away_total = `awayTeamScore.matchScore.totalScore`) %>%
+      mutate(winner = case_when(
+        home_total > away_total ~ "home",
+        away_total > home_total ~ "away",
+        TRUE ~ "draw"
+      )),
+    by = "match.matchId"
+  ) %>%
+  mutate(
+    # Margins at each break
+    Q1_margin = home_cumulative_Q1 - away_cumulative_Q1,
+    Q2_margin = home_cumulative_Q2 - away_cumulative_Q2,
+    Q3_margin = home_cumulative_Q3 - away_cumulative_Q3,
+    
+    # Who was leading by 12+ at each break
+    Q1_lead12_team = case_when(Q1_margin >= 12 ~ "home", Q1_margin <= -12 ~ "away", TRUE ~ NA_character_),
+    Q2_lead12_team = case_when(Q2_margin >= 12 ~ "home", Q2_margin <= -12 ~ "away", TRUE ~ NA_character_),
+    Q3_lead12_team = case_when(Q3_margin >= 12 ~ "home", Q3_margin <= -12 ~ "away", TRUE ~ NA_character_),
+    
+    # Did the leading team win?
+    Q1_lead12_result = Q1_lead12_team == winner,
+    Q2_lead12_result = Q2_lead12_team == winner,
+    Q3_lead12_result = Q3_lead12_team == winner
+  )
+
+summary_lead12 <- function(lead_col, result_col) {
+  quarter_margins %>%
+    filter(!is.na(.data[[lead_col]])) %>%
+    summarise(
+      Total_Leads = n(),
+      Wins = sum(.data[[result_col]], na.rm = TRUE),
+      Losses = Total_Leads - Wins,
+      Win_Percent = round(100 * Wins / Total_Leads, 1)
+    )
+}
+
+results_lead12 <- bind_rows(
+  Q1 = summary_lead12("Q1_lead12_team", "Q1_lead12_result"),
+  Q2 = summary_lead12("Q2_lead12_team", "Q2_lead12_result"),
+  Q3 = summary_lead12("Q3_lead12_team", "Q3_lead12_result"),
+  .id = "Quarter"
+)
+
+results_lead12
